@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-#define MAX_SIZE 271
+#define MAX_QUERY_SIZE 271
+#define MAX_RESPONSE_SIZE 512
 
 typedef struct {
     uint16_t id;
@@ -15,5 +16,6 @@ typedef struct {
 } dns_header;
 
 uint16_t build_query(const char *hostname, uint8_t **buf);
+uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response);
 
 #endif // ASSETS_H
