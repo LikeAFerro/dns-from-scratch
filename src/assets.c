@@ -1,4 +1,8 @@
-// TODO: Better error handling, especially for memory allocation failures and socket errors
+// TODO:
+// Better error handling, especially for memory allocation failures and socket errors.
+// IPv6 support is not implemented, and the code assumes that all answers will be of type A (IPv4).
+// The code does not handle multiple answers or different types of answers (e.g., CNAME, MX, etc.).
+// Testing unit should be updated.
 
 #include "assets.h"
 #include <arpa/inet.h>
@@ -24,7 +28,7 @@ uint16_t build_query(const char *hostname, uint8_t **buf) {
     };
     memcpy(tmp, &header, sizeof(header));
 
-    uint16_t index = HEADER_SIZE, i = 0;
+    uint16_t index = sizeof(dns_header), i = 0;
     while (*hostname) {
         if (*hostname == '.') {
             tmp[index] = i;
@@ -114,62 +118,47 @@ uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response) {
     return response_size;
 }
 
-char *parse_response(uint8_t *response, uint16_t response_size) {
+dns_answer *parse_response(uint8_t *response, uint16_t response_size) {
     if (!response ||
         response_size <
             sizeof(dns_header) + 5) { // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
         return NULL;
     }
-    dns_header header_big;
-    memcpy(&header_big, response, sizeof(header_big));
-    dns_header header = {ntohs(header_big.id),
-                         ntohs(header_big.flags),
-                         ntohs(header_big.qdcount),
-                         ntohs(header_big.ancount),
-                         ntohs(header_big.nscount),
-                         ntohs(header_big.arcount)};
-    if (header.ancount == 0) {
-        return NULL; // No answers
+
+    dns_header *header = (dns_header *)response;
+    if (ntohs(header->ancount) == 0) {
+        return NULL; // No answers in the response
     }
 
-    int i = HEADER_SIZE; // Skip header
-    if (!response[i]) {
-        return NULL; // Empty domain name
+    uint16_t index = sizeof(dns_header);
+    while (*(response + index)) {
+        index += *(response + index) + 1; // Move to the next label
     }
-    int len = response[i++]; // Length of the first label
-    char *tmp = malloc(MAX_QUERY_SIZE);
-    if (!tmp) {
+    index += 1 + sizeof(dns_footer); // Skip the null byte and footer
+
+    dns_answer *answers = malloc(ntohs(header->ancount) * sizeof(dns_answer));
+    if (!answers) {
         return NULL;
     }
 
-    while (response[i]) {
-        if (len == 0) {
-            len = response[i];
-            tmp[i - HEADER_SIZE - 1] = '.';
+    for (uint16_t i = 0; i < ntohs(header->ancount); i++) {
+        if ((*(response + index) & 0xC0) == 0xC0) {
+            index += 2; // Skip the compressed name pointer
         } else {
-            tmp[i - HEADER_SIZE - 1] = response[i];
-            len--;
+            return NULL; // Unsupported name format in answer
         }
-        i++;
-    }
-    tmp[i - HEADER_SIZE - 1] = '\0'; // Null-terminate the domain name
 
-    char *name = malloc(i - HEADER_SIZE - 1 + 1); // +1 for null terminator
-    if (!name) {
-        free(tmp);
-        return NULL;
-    }
-    memcpy(name, tmp, i - HEADER_SIZE - 1 + 1);
-    free(tmp);
-
-    dns_footer footer;
-    memcpy(&footer, response + i + 1, sizeof(footer));
-    if (ntohs(footer.type) != 0x0001 || ntohs(footer.addr_class) != 0x0001) {
-        free(name);
-        return NULL; // Not an A record or not IN class
+        answers[i].type = ntohs(*(uint16_t *)(response + index));
+        index += 2; // Move past type
+        answers[i].addr_class = ntohs(*(uint16_t *)(response + index));
+        index += 2; // Move past class
+        answers[i].ttl = ntohl(*(uint32_t *)(response + index));
+        index += 4; // Move past TTL
+        answers[i].datalength = ntohs(*(uint16_t *)(response + index));
+        index += 2; // Move past data length
+        inet_ntop(AF_INET, response + index, answers[i].address, ADDRESS_SIZE);
+        index += answers[i].datalength; // Move to the next answer
     }
 
-    i += 1 + sizeof(footer); // Move the index along
-
-    return name;
+    return answers;
 }

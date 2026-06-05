@@ -39,11 +39,24 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
 
-    char *parsed_name = parse_response(response, response_size);
-    printf("Parsed domain name: %s\n", parsed_name);
+    dns_answer *answers = parse_response(response, response_size);
+    if (!answers) {
+        fprintf(stderr, "Failed to parse response\n");
+        free(query);
+        free(response);
+        exit(1);
+    }
+
+    printf("Answer:\n");
+    printf("Type: %u, Class: %u, TTL: %u, Data Length: %u, Address: %s\n",
+           answers[0].type,
+           answers[0].addr_class,
+           answers[0].ttl,
+           answers[0].datalength,
+           answers[0].address);
 
     free(query);
     free(response);
-    free(parsed_name);
+    free(answers);
     return 0;
 }

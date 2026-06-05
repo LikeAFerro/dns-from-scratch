@@ -3,10 +3,9 @@
 
 #include <stdint.h>
 
-#define HEADER_SIZE 12
-#define FOOTER_SIZE 4
 #define MAX_QUERY_SIZE 271
 #define MAX_RESPONSE_SIZE 512
+#define ADDRESS_SIZE 16
 
 typedef struct {
     uint16_t id;
@@ -22,8 +21,16 @@ typedef struct {
     uint16_t addr_class;
 } dns_footer;
 
+typedef struct {
+    uint16_t type;
+    uint16_t addr_class;
+    uint32_t ttl;
+    uint16_t datalength;
+    char address[ADDRESS_SIZE]; // IPv4 address
+} dns_answer;
+
 uint16_t build_query(const char *hostname, uint8_t **buf);
 uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response);
-char *parse_response(uint8_t *response, uint16_t response_size);
+dns_answer *parse_response(uint8_t *response, uint16_t response_size);
 
 #endif // ASSETS_H
