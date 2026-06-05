@@ -24,31 +24,31 @@ uint16_t build_query(const char *hostname, uint8_t **buf) {
     };
     memcpy(tmp, &header, sizeof(header));
 
-    uint16_t starting_index = 12, i = 0;
+    uint16_t index = HEADER_SIZE, i = 0;
     while (*hostname) {
         if (*hostname == '.') {
-            tmp[starting_index] = i;
-            starting_index += i + 1;
+            tmp[index] = i;
+            index += i + 1;
             i = 0;
         }
 
         else {
-            tmp[starting_index + i + 1] = *hostname;
+            tmp[index + i + 1] = *hostname;
             i++;
         }
         hostname++;
     }
-    tmp[starting_index] = i; // Length of the last label
-    starting_index += i + 1; // Total size of the domain name
-    tmp[starting_index] = 0; // Null-terminate the domain name
-    uint16_t size = starting_index + 1;
+    tmp[index] = i; // Length of the last label
+    index += i + 1; // Total size of the domain name
+    tmp[index] = 0; // Null-terminate the domain name
+    uint16_t size = index + 1;
 
-    uint16_t qfields[] = {
+    dns_footer footer = {
         htons(0x0001), // QTYPE: A
         htons(0x0001)  // QCLASS: IN
     };
-    memcpy(tmp + size, qfields, sizeof(qfields));
-    size += sizeof(qfields);
+    memcpy(tmp + size, &footer, sizeof(footer));
+    size += sizeof(footer);
 
     *buf = malloc(size);
     if (!*buf) {
@@ -112,4 +112,64 @@ uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response) {
     free(tmp);
     close(fd);
     return response_size;
+}
+
+char *parse_response(uint8_t *response, uint16_t response_size) {
+    if (!response ||
+        response_size <
+            sizeof(dns_header) + 5) { // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
+        return NULL;
+    }
+    dns_header header_big;
+    memcpy(&header_big, response, sizeof(header_big));
+    dns_header header = {ntohs(header_big.id),
+                         ntohs(header_big.flags),
+                         ntohs(header_big.qdcount),
+                         ntohs(header_big.ancount),
+                         ntohs(header_big.nscount),
+                         ntohs(header_big.arcount)};
+    if (header.ancount == 0) {
+        return NULL; // No answers
+    }
+
+    int i = HEADER_SIZE; // Skip header
+    if (!response[i]) {
+        return NULL; // Empty domain name
+    }
+    int len = response[i++]; // Length of the first label
+    char *tmp = malloc(MAX_QUERY_SIZE);
+    if (!tmp) {
+        return NULL;
+    }
+
+    while (response[i]) {
+        if (len == 0) {
+            len = response[i];
+            tmp[i - HEADER_SIZE - 1] = '.';
+        } else {
+            tmp[i - HEADER_SIZE - 1] = response[i];
+            len--;
+        }
+        i++;
+    }
+    tmp[i - HEADER_SIZE - 1] = '\0'; // Null-terminate the domain name
+
+    char *name = malloc(i - HEADER_SIZE - 1 + 1); // +1 for null terminator
+    if (!name) {
+        free(tmp);
+        return NULL;
+    }
+    memcpy(name, tmp, i - HEADER_SIZE - 1 + 1);
+    free(tmp);
+
+    dns_footer footer;
+    memcpy(&footer, response + i + 1, sizeof(footer));
+    if (ntohs(footer.type) != 0x0001 || ntohs(footer.addr_class) != 0x0001) {
+        free(name);
+        return NULL; // Not an A record or not IN class
+    }
+
+    i += 1 + sizeof(footer); // Move the index along
+
+    return name;
 }

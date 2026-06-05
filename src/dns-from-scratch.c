@@ -39,7 +39,11 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
 
+    char *parsed_name = parse_response(response, response_size);
+    printf("Parsed domain name: %s\n", parsed_name);
+
     free(query);
     free(response);
+    free(parsed_name);
     return 0;
 }

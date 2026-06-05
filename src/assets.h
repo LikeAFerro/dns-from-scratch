@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define HEADER_SIZE 12
+#define FOOTER_SIZE 4
 #define MAX_QUERY_SIZE 271
 #define MAX_RESPONSE_SIZE 512
 
@@ -15,7 +17,13 @@ typedef struct {
     uint16_t arcount;
 } dns_header;
 
+typedef struct {
+    uint16_t type;
+    uint16_t addr_class;
+} dns_footer;
+
 uint16_t build_query(const char *hostname, uint8_t **buf);
 uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response);
+char *parse_response(uint8_t *response, uint16_t response_size);
 
 #endif // ASSETS_H
