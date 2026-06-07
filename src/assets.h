@@ -7,6 +7,18 @@
 #define MAX_RESPONSE_SIZE 512
 #define ADDRESS_SIZE 16
 
+typedef enum {
+    DNS_OK = 0,
+    DNS_QUERY_ERROR,
+    DNS_MEMORY_ERROR,
+    DNS_SOCKET_ERROR,
+    DNS_INVALID_QUERY,
+    DNS_INVALID_ADDRESS,
+    DNS_TIMEOUT_ERROR,
+    DNS_NO_ANSWERS,
+    DNS_INVALID_ANSWER
+} dns_status;
+
 typedef struct {
     uint16_t id;
     uint16_t flags;
@@ -29,8 +41,10 @@ typedef struct {
     char address[ADDRESS_SIZE]; // IPv4 address
 } dns_answer;
 
-uint16_t build_query(const char *hostname, uint8_t **buf);
-uint16_t send_query(uint8_t *query, uint16_t query_size, uint8_t **response);
-dns_answer *parse_response(uint8_t *response, uint16_t response_size);
+dns_status build_query(const char *hostname, uint8_t **buf, uint16_t *query_size);
+dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
+                      uint16_t *response_size);
+dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer_count,
+                          dns_answer **answers);
 
 #endif // ASSETS_H
