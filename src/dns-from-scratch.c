@@ -4,6 +4,7 @@
 #include <time.h>
 
 int main(int argc, char *argv[]) {
+    // Validate command-line arguments
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <domain>\n", argv[0]);
         exit(1);
@@ -25,17 +26,17 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    printf("%d bytes:\n", query_size);
-
-    for (uint16_t i = 0; i < query_size; i++) {
-        printf("%02x ", query[i]);
-    }
-    printf("\n");
+    // -------------------------------- Debug: Print the raw query bytes
+    // printf("%d bytes:\n", query_size);
+    // for (uint16_t i = 0; i < query_size; i++) {
+    //     printf("%02x ", query[i]);
+    // }
+    // printf("\n");
+    // -------------------------------- End debug
 
     uint8_t *response = NULL;
     uint16_t response_size;
     status = send_query(query, query_size, &response, &response_size);
-
     if (status != DNS_OK) {
         switch (status) {
         case DNS_SOCKET_ERROR:
@@ -61,11 +62,13 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    printf("Received response:\n");
-    for (uint16_t i = 0; i < response_size; i++) {
-        printf("%02x ", response[i]);
-    }
-    printf("\n");
+    // -------------------------------- Debug: Print the raw response bytes
+    // printf("Received response:\n");
+    // for (uint16_t i = 0; i < response_size; i++) {
+    //    printf("%02x ", response[i]);
+    //}
+    // printf("\n");
+    // -------------------------------- End debug
 
     int answer_count = 0;
     dns_answer *answers = NULL;
@@ -90,9 +93,8 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    printf("Received %d answers:\n", answer_count);
+    printf("Answers received: %d\n", answer_count);
     for (int i = 0; i < answer_count; i++) {
-        printf("Answer %d:\n", i + 1);
         printf("Type: %u, Class: %u, TTL: %u, Data Length: %u, Address: %s\n",
                answers[i].type,
                answers[i].addr_class,
