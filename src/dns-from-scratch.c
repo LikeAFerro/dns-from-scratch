@@ -47,6 +47,12 @@ int main(int argc, char *argv[]) {
         case DNS_TIMEOUT_ERROR:
             fprintf(stderr, "Request timed out\n");
             break;
+        case DNS_INVALID_QUERY:
+            fprintf(stderr, "Invalid query format\n");
+            break;
+        case DNS_INVALID_ADDRESS:
+            fprintf(stderr, "Invalid DNS server address\n");
+            break;
         default:
             fprintf(stderr, "Unknown error occurred\n");
         }

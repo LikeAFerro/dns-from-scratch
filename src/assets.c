@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 dns_status build_query(const char *hostname, uint8_t **buf, uint16_t *query_size) {
-    if (!hostname || strlen(hostname) > 255) {
+    if (!hostname || !buf || !query_size || strlen(hostname) > MAX_HOSTNAME_LENGTH) {
         return DNS_QUERY_ERROR;
     }
     uint8_t *tmp = malloc(MAX_QUERY_SIZE);
@@ -33,18 +33,38 @@ dns_status build_query(const char *hostname, uint8_t **buf, uint16_t *query_size
 
     uint16_t index = sizeof(dns_header), i = 0;
     while (*hostname) {
+        if (*hostname == ' ' || *hostname == '\t' || *hostname == '\n' || *hostname == '\r' ||
+            i >= 63) { // Prevent whitespace in hostname and label length overflow
+            free(tmp);
+            return DNS_QUERY_ERROR;
+        }
         if (*hostname == '.') {
+            if (i == 0) { // Prevent empty labels
+                free(tmp);
+                return DNS_QUERY_ERROR;
+            }
             tmp[index] = i;
             index += i + 1;
             i = 0;
         }
 
         else {
+            if (index + i + 1 >= MAX_QUERY_SIZE) { // Prevent buffer overflow
+                free(tmp);
+                return DNS_QUERY_ERROR;
+            }
             tmp[index + i + 1] = *hostname;
             i++;
         }
         hostname++;
     }
+
+    // Prevent buffer overflow for the last label and footer
+    if (index + i + 1 + sizeof(dns_footer) >= MAX_QUERY_SIZE) {
+        free(tmp);
+        return DNS_QUERY_ERROR;
+    }
+
     tmp[index] = i; // Length of the last label
     index += i + 1; // Total size of the domain name
     tmp[index] = 0; // Null-terminate the domain name
@@ -72,7 +92,7 @@ dns_status build_query(const char *hostname, uint8_t **buf, uint16_t *query_size
 
 dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
                       uint16_t *response_size) {
-    if (!query || query_size < sizeof(dns_header) + 5 ||
+    if (!query || !response || !response_size || query_size < sizeof(dns_header) + 5 ||
         query_size > MAX_QUERY_SIZE) { // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
         return DNS_INVALID_QUERY;
     }
@@ -127,14 +147,14 @@ dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
 
 dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer_count,
                           dns_answer **answers) {
-    if (!response ||
-        response_size <
-            sizeof(dns_header) + 5) { // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
+    // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
+    if (!response || !answer_count || !answers || response_size < sizeof(dns_header) + 5) {
         return DNS_INVALID_ANSWER;
     }
 
-    dns_header *header = (dns_header *)response;
-    if (ntohs(header->ancount) == 0) {
+    dns_header header;
+    memcpy(&header, response, sizeof(header));
+    if (ntohs(header.ancount) == 0) {
         return DNS_NO_ANSWERS; // No answers in the response
     }
 
@@ -144,28 +164,33 @@ dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer
     }
     index += 1 + sizeof(dns_footer); // Skip the null byte and footer
 
-    *answers = malloc(ntohs(header->ancount) * sizeof(dns_answer));
+    *answers = malloc(ntohs(header.ancount) * sizeof(dns_answer));
     if (!*answers) {
         return DNS_MEMORY_ERROR;
     }
-    *answer_count = ntohs(header->ancount);
+    *answer_count = ntohs(header.ancount);
 
     for (uint16_t i = 0; i < *answer_count; i++) {
-        if ((*(response + index) & 0xC0) == 0xC0) {
-            index += 2; // Skip the compressed name pointer
-        } else {
+        if ((*(response + index) & 0xC0) != 0xC0 || index + 10 > response_size) {
             free(*answers);
             *answers = NULL;
-            return DNS_INVALID_ANSWER; // Unsupported name format in answer
+            return DNS_INVALID_ANSWER; // Name pointer expected but not found, or buffer overflow
+                                       // risk
+        } else {
+            index += 2; // Skip the compressed name pointer
         }
 
-        (*answers)[i].type = ntohs(*(uint16_t *)(response + index));
+        memcpy(&(*answers)[i].type, response + index, 2);
+        (*answers)[i].type = ntohs((*answers)[i].type);
         index += 2; // Move past type
-        (*answers)[i].addr_class = ntohs(*(uint16_t *)(response + index));
+        memcpy(&(*answers)[i].addr_class, response + index, 2);
+        (*answers)[i].addr_class = ntohs((*answers)[i].addr_class);
         index += 2; // Move past class
-        (*answers)[i].ttl = ntohl(*(uint32_t *)(response + index));
+        memcpy(&(*answers)[i].ttl, response + index, 4);
+        (*answers)[i].ttl = ntohl((*answers)[i].ttl);
         index += 4; // Move past TTL
-        (*answers)[i].datalength = ntohs(*(uint16_t *)(response + index));
+        memcpy(&(*answers)[i].datalength, response + index, 2);
+        (*answers)[i].datalength = ntohs((*answers)[i].datalength);
         index += 2;                    // Move past data length
         if ((*answers)[i].type == 1) { // Type A (IPv4)
             inet_ntop(AF_INET, response + index, (*answers)[i].address, ADDRESS_SIZE);

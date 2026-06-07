@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#define MAX_HOSTNAME_LENGTH 253
 #define MAX_QUERY_SIZE 271
 #define MAX_RESPONSE_SIZE 512
 #define ADDRESS_SIZE 16
