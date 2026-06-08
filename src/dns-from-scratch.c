@@ -12,6 +12,12 @@ int main(int argc, char *argv[]) {
     dns_status status = initial_config(argc, argv, &config, &query);
     if (status != DNS_OK) {
         switch (status) {
+        case DNS_HELP:
+            printf("Usage: %s [options] <hostname>\n", argv[0]);
+            printf("Options:\n");
+            printf("  -h        Show this help message\n");
+            printf("  -6        Query for AAAA records (IPv6)\n");
+            exit(0);
         case DNS_ARGUMENT_ERROR:
             fprintf(stderr, "Invalid arguments provided\n");
             break;

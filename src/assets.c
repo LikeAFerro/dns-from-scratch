@@ -1,7 +1,6 @@
 // TODO:
 // Make it so that the resolver is not hardcoded to use Google's public DNS server
 // The code does not handle different types of answers (e.g., CNAME, MX, etc.).
-// Testing unit should be updated.
 
 #include "assets.h"
 #include <arpa/inet.h>
