@@ -4,7 +4,11 @@
 #include <netinet/in.h>
 #include <stdint.h>
 
+#define DNS_DEFAULT_SERVER "8.8.8.8"
+#define DNS_DEFAULT_PORT 53
+#define DNS_DEFAULT_TIMEOUT 5
 #define DNS_HEADER_SIZE 12
+#define DNS_FIXED_FIELDS_SIZE 16
 #define DNS_MAX_HOSTNAME_LENGTH 253
 #define DNS_MAX_QUERY_SIZE 271
 #define DNS_MAX_RESPONSE_SIZE 512
@@ -16,11 +20,15 @@
 /** @brief Status codes for DNS operations */
 typedef enum {
     DNS_OK = 0,
+    DNS_HELP,
     DNS_QUERY_ERROR,
     DNS_HOSTNAME_ERROR,
-    DNS_OPTIONS_ERROR,
-    DNS_ARGUMENTS_ERROR,
-
+    DNS_OPTION_ERROR,
+    DNS_ARGUMENT_ERROR,
+    DNS_MEMORY_ERROR,
+    DNS_SOCKET_ERROR,
+    DNS_ADDRESS_ERROR,
+    DNS_ANSWER_ERROR
 } dns_status;
 
 typedef struct {
@@ -34,9 +42,6 @@ typedef struct {
     uint16_t id;                              // Query ID
     uint16_t flags;                           // Query flags
     uint16_t qdcount;                         // Number of questions
-    uint16_t ancount;                         // Number of answers
-    uint16_t nscount;                         // Number of authority records
-    uint16_t arcount;                         // Number of additional records
     char query_name[DNS_MAX_HOSTNAME_LENGTH]; // Domain name to query
     uint16_t qtype;                           // Query type (e.g., A, AAAA)
     uint16_t qclass;                          // Query class (usually 1 for IN)
@@ -63,7 +68,7 @@ typedef struct {
  * @param query Output DNS query structure
  * @return DNS status code indicating success or type of error
  */
-dns_status initial_config(int argc, const char *argv[], dns_config *config, dns_query *query);
+dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query *query);
 
 /** @brief Serialize a DNS query structure into a byte array
  * @param query The DNS query structure to serialize

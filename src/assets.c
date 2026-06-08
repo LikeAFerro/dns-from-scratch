@@ -10,90 +10,128 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
-dns_query query_default() {
-    dns_query query = {
-        .id = htons(rand() % 65536),
-        .flags = htons(DNS_STANDARD_QUERY_FLAGS),
-        .qdcount = htons(1),
-        .ancount = htons(0),
-        .nscount = htons(0),
-        .arcount = htons(0),
-        .query_name = NULL,
-        .qtype = htons(DNS_QTYPE_A),
-        .qclass = htons(1),
-    };
-    return query;
+dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query *query) {
+    if (!config || !query || argc < 2) {
+        return DNS_ARGUMENT_ERROR;
+    }
+
+    // Set default values for the configuration
+    strncpy(config->dns_server, DNS_DEFAULT_SERVER, sizeof(config->dns_server));
+    config->port = DNS_DEFAULT_PORT;
+    config->timeout = DNS_DEFAULT_TIMEOUT;
+
+    // Seed the random number generator and initialize the query structure with default values
+    srand(time(NULL));          // Seed the random number generator for query ID generation
+    query->id = rand() % 65536; // Random query ID
+    query->flags = DNS_STANDARD_QUERY_FLAGS; // Standard query with recursion desired
+    query->qdcount = 1;                      // One question
+    query->qtype = DNS_QTYPE_A;              // Default to A record (IPv4)
+    query->qclass = 1;                       // IN class
+
+    // Parse command-line options and arguments
+    int opt;
+    while ((opt = getopt(argc, argv, "h6")) != -1) {
+        switch (opt) {
+        case 'h':
+            return DNS_HELP;
+        case '6':
+            query->qtype = DNS_QTYPE_AAAA;
+            break;
+        default:
+            return DNS_OPTION_ERROR;
+        }
+    }
+    if (optind >= argc) {
+        return DNS_ARGUMENT_ERROR;
+    }
+    if (strlen(argv[optind]) > DNS_MAX_HOSTNAME_LENGTH) {
+        return DNS_HOSTNAME_ERROR;
+    }
+    strncpy(query->query_name, argv[optind], DNS_MAX_HOSTNAME_LENGTH);
+
+    return DNS_OK;
 }
 
-dns_config config_default() {
-    dns_config config = {.dns_server = "8.8.8.8", .port = htons(53), .timeout = 5, .query_size = 0};
-    return config;
-}
-
-dns_status build_query(const char *hostname, dns_query *query, dns_config *config) {
-    if (!hostname || !query || !config || strlen(hostname) > MAX_HOSTNAME_LENGTH) {
+dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query) {
+    if (!query || !serialized_query || strlen(query->query_name) == 0 || query->qtype == 0 ||
+        query->qclass == 0 || query->qdcount == 0) {
         return DNS_QUERY_ERROR;
     }
 
+    serialized_query->size = 0;
+    serialized_query->data = NULL;
     // Temporary buffer to build the query name before assigning it to the query structure
-    uint8_t *buffer = malloc(MAX_QUERY_SIZE);
+    uint8_t *buffer = malloc(DNS_MAX_QUERY_SIZE);
+    if (!buffer) {
+        return DNS_MEMORY_ERROR;
+    }
 
-    // Iterate through the hostname and build the query buffer according to the DNS protocol format
-    int label = 0, index = 1;
+    uint16_t header[] = {
+        htons(query->id), htons(query->flags), htons(query->qdcount), htons(0), htons(0), htons(0)};
+    memcpy(buffer, header, DNS_HEADER_SIZE); // Copy the fixed header fields
+    serialized_query->size += DNS_HEADER_SIZE;
+
+    // Iterate through the hostname and build the query buffer
+    int index = 0, label = 0;
+    const char *hostname = query->query_name;
     while (*hostname) {
         // Prevent invalid characters and labels longer than 63 bytes
         if (*hostname == ' ' || *hostname == '\t' || *hostname == '\n' || *hostname == '\r' ||
             index >= 63) {
             free(buffer);
-            return DNS_QUERY_ERROR;
+            return DNS_HOSTNAME_ERROR;
         }
 
         // Handle label boundaries (dots)
         if (*hostname == '.') {
-            if (label == 0) { // Prevent empty labels
+            if (index == 0) { // Prevent empty labels
                 free(buffer);
-                return DNS_QUERY_ERROR;
+                return DNS_HOSTNAME_ERROR;
             }
-            buffer[label] = index;
-            label += index + 1;
-            index = 0;
+            buffer[serialized_query->size + label] = index;
+            label += index + 1; // Move to the next label position
+            index = 0;          // Reset index for the next label
         }
 
         else {
-            if (label + index + 1 >= MAX_QUERY_SIZE) { // Prevent buffer overflow
-                free(buffer);
-                return DNS_QUERY_ERROR;
-            }
-            buffer[label + index + 1] = *hostname;
             index++;
+            if (label + index >= DNS_MAX_QUERY_SIZE) { // Prevent buffer overflow
+                free(buffer);
+                return DNS_HOSTNAME_ERROR;
+            }
+            buffer[serialized_query->size + label + index] = *hostname;
         }
         hostname++;
     }
 
-    buffer[label] = index;                          // Length of the last label
+    buffer[serialized_query->size + label] = index; // Length of the last label
     label += index + 1;                             // Total size of the domain name
-    buffer[label] = 0;                              // Null-terminate the domain name
-    config->query_size = label + FIXED_FIELDS_SIZE; // Total size of the query
+    buffer[serialized_query->size + label] = 0;     // Null-terminate the domain name
+    serialized_query->size += label + 1;            // Total size of the query
+
+    uint16_t qtype_qclass[] = {htons(query->qtype), htons(query->qclass)};
+    memcpy(buffer + serialized_query->size, qtype_qclass, sizeof(qtype_qclass));
+    serialized_query->size += sizeof(qtype_qclass);
 
     // Allocate memory for the query name in the query structure and copy the buffer
-    query->query_name = malloc(label);
-    if (!query->query_name) {
+    serialized_query->data = malloc(serialized_query->size);
+    if (!serialized_query->data) {
         free(buffer);
         return DNS_MEMORY_ERROR;
     }
-    memcpy(query->query_name, buffer, label);
+    memcpy(serialized_query->data, buffer, serialized_query->size);
 
     free(buffer);
     return DNS_OK;
 }
 
-dns_status send_query(const dns_query *query, const dns_config *config, uint8_t **response,
-                      uint16_t *response_size) {
-    if (!query || !config || !response || !response_size ||
-        config->query_size < FIXED_FIELDS_SIZE + 1 || config->query_size > MAX_QUERY_SIZE) {
-        return DNS_INVALID_QUERY;
+dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buffer *response) {
+    if (!query || !config || !response || query->size < DNS_FIXED_FIELDS_SIZE + 1 ||
+        query->size > DNS_MAX_QUERY_SIZE) {
+        return DNS_QUERY_ERROR;
     }
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -101,10 +139,10 @@ dns_status send_query(const dns_query *query, const dns_config *config, uint8_t 
         return DNS_SOCKET_ERROR;
     }
 
-    struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = config->port};
+    struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = htons(config->port)};
     if (inet_pton(AF_INET, config->dns_server, &dest.sin_addr) != 1) {
         close(fd);
-        return DNS_INVALID_ADDRESS;
+        return DNS_ADDRESS_ERROR;
     }
 
     struct timeval tv = {.tv_sec = config->timeout, .tv_usec = 0}; // 5-second timeout
@@ -113,59 +151,58 @@ dns_status send_query(const dns_query *query, const dns_config *config, uint8_t 
         return DNS_SOCKET_ERROR;
     }
 
-    if (sendto(fd, query, config->query_size, 0, (struct sockaddr *)&dest, sizeof(dest)) == -1) {
+    if (sendto(fd, query->data, query->size, 0, (struct sockaddr *)&dest, sizeof(dest)) == -1) {
         close(fd);
         return DNS_SOCKET_ERROR;
     }
 
-    // Temporary buffer to receive the response before allocating the final buffer of the exact size
-    uint8_t *tmp = malloc(MAX_RESPONSE_SIZE);
+    // Temporary buffer to receive the response before allocating the final buffer of the exact
+    // size
+    uint8_t *tmp = malloc(DNS_MAX_RESPONSE_SIZE);
     if (!tmp) {
         close(fd);
         return DNS_MEMORY_ERROR;
     }
-    int size = recvfrom(fd, tmp, MAX_RESPONSE_SIZE, 0, NULL, NULL);
+    int size = recvfrom(fd, tmp, DNS_MAX_RESPONSE_SIZE, 0, NULL, NULL);
     if (size == -1) {
         free(tmp);
         close(fd);
-        return DNS_TIMEOUT_ERROR;
+        return DNS_ANSWER_ERROR;
     }
-    *response_size = size;
+    response->size = size;
 
     // Allocate the final buffer to the necessary size and copy the response data
-    *response = malloc(*response_size);
-    if (!*response) {
+    response->data = malloc(response->size);
+    if (!response->data) {
         free(tmp);
         close(fd);
         return DNS_MEMORY_ERROR;
     }
-    memcpy(*response, tmp, *response_size);
+    memcpy(response->data, tmp, response->size);
 
     free(tmp);
     close(fd);
     return DNS_OK;
 }
 
-dns_status parse_response(dns_query *query, uint8_t *response, uint16_t response_size,
-                          dns_answer **answers) {
-    if (!query || !response || !answers || response_size < strlen((char *)query->query_name)) {
-        return DNS_INVALID_ANSWER;
+dns_status parse_response(const dns_buffer *response, dns_answer **answers,
+                          uint16_t *answer_count) {
+    if (!response || !answers || !answer_count || response->size < DNS_FIXED_FIELDS_SIZE) {
+        return DNS_ANSWER_ERROR;
     }
 
-    // Response starts with the query data, which we can skip
-    memcpy(&query->id, response, query->query_size);
-    *answer_count = ntohs(header.ancount);
-    if (*answer_count == 0) {
-        return DNS_NO_ANSWERS; // No answers in the response
-    }
+    uint16_t header[DNS_HEADER_SIZE / 2]; // DNS header is 12 bytes, so we need 6 uint16_t fields
+    memcpy(header, response->data, DNS_HEADER_SIZE);
+    *answer_count = ntohs(header[3]); // The number of answers is in the 4th field of the header
 
-    // Skip the question section by moving the number of bytes specified by the labels in the query
-    uint16_t index = sizeof(dns_header);
-    while (*(response + index)) {
-        index += *(response + index) + 1;
+    // Skip the question section by moving the number of bytes specified by the labels in the
+    // query
+    uint16_t index = DNS_HEADER_SIZE; // Start after the header
+    while (*(response->data + index)) {
+        index += *(response->data + index) + 1;
     }
     // Skip the null byte and footer
-    index += 1 + sizeof(dns_footer);
+    index += 1 + sizeof(uint16_t) * 2; // Move past the null byte and QTYPE/QCLASS fields
 
     // Allocate memory for the answers based on the number of answers specified in the header
     *answers = malloc(*answer_count * sizeof(dns_answer));
@@ -177,29 +214,29 @@ dns_status parse_response(dns_query *query, uint8_t *response, uint16_t response
     // dns_answer structure
     for (uint16_t i = 0; i < *answer_count; i++) {
         // Name pointer check and buffer overflow prevention.
-        if ((*(response + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER ||
-            index + 10 > response_size) {
+        if ((*(response->data + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER ||
+            index + 10 > response->size) {
             free(*answers);
             *answers = NULL;
-            return DNS_INVALID_ANSWER;
+            return DNS_ANSWER_ERROR;
         } else {
             index += 2; // Skip the compressed name pointer
         }
 
-        memcpy(&(*answers)[i].type, response + index, 2);
+        memcpy(&(*answers)[i].type, response->data + index, 2);
         (*answers)[i].type = ntohs((*answers)[i].type);
         index += 2; // Move past type
-        memcpy(&(*answers)[i].addr_class, response + index, 2);
+        memcpy(&(*answers)[i].addr_class, response->data + index, 2);
         (*answers)[i].addr_class = ntohs((*answers)[i].addr_class);
         index += 2; // Move past class
-        memcpy(&(*answers)[i].ttl, response + index, 4);
+        memcpy(&(*answers)[i].ttl, response->data + index, 4);
         (*answers)[i].ttl = ntohl((*answers)[i].ttl);
         index += 4; // Move past TTL
-        memcpy(&(*answers)[i].datalength, response + index, 2);
+        memcpy(&(*answers)[i].datalength, response->data + index, 2);
         (*answers)[i].datalength = ntohs((*answers)[i].datalength);
         index += 2;                              // Move past data length
         if ((*answers)[i].type == DNS_QTYPE_A) { // Type A (IPv4)
-            inet_ntop(AF_INET, response + index, (*answers)[i].address, INET6_ADDRSTRLEN);
+            inet_ntop(AF_INET, response->data + index, (*answers)[i].address, INET6_ADDRSTRLEN);
         }
         index += (*answers)[i].datalength; // Move past the address
     }
