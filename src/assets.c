@@ -1,8 +1,8 @@
 // TODO:
 // IPv6 support is not implemented, and the code assumes that all answers will be of type A (IPv4).
+// Make it so that the resolver is not hardcoded to use Google's public DNS server
 // The code does not handle different types of answers (e.g., CNAME, MX, etc.).
 // Testing unit should be updated.
-// Doxygen comments should be added to all functions and data structures for better documentation.
 
 #include "assets.h"
 #include <arpa/inet.h>
@@ -12,92 +12,87 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-dns_status build_query(const char *hostname, uint8_t **buf, uint16_t *query_size) {
-    if (!hostname || !buf || !query_size || strlen(hostname) > MAX_HOSTNAME_LENGTH) {
+dns_query query_default() {
+    dns_query query = {
+        .id = htons(rand() % 65536),
+        .flags = htons(DNS_STANDARD_QUERY_FLAGS),
+        .qdcount = htons(1),
+        .ancount = htons(0),
+        .nscount = htons(0),
+        .arcount = htons(0),
+        .query_name = NULL,
+        .qtype = htons(DNS_QTYPE_A),
+        .qclass = htons(1),
+    };
+    return query;
+}
+
+dns_config config_default() {
+    dns_config config = {.dns_server = "8.8.8.8", .port = htons(53), .timeout = 5, .query_size = 0};
+    return config;
+}
+
+dns_status build_query(const char *hostname, dns_query *query, dns_config *config) {
+    if (!hostname || !query || !config || strlen(hostname) > MAX_HOSTNAME_LENGTH) {
         return DNS_QUERY_ERROR;
     }
-    // Temporary buffer to build the query before allocating the final buffer of the exact size
-    uint8_t *tmp = malloc(MAX_QUERY_SIZE);
-    if (!tmp) {
-        return DNS_MEMORY_ERROR;
-    }
 
-    dns_header header = {
-        htons((rand() % 65536)), // ID
-        htons(0x0100),           // Flags: standard query
-        htons(1),                // QDCOUNT: 1 question
-        htons(0),                // ANCOUNT: 0 answers
-        htons(0),                // NSCOUNT: 0 authority records
-        htons(0)                 // ARCOUNT: 0 additional records
-    };
-    memcpy(tmp, &header, sizeof(header));
+    // Temporary buffer to build the query name before assigning it to the query structure
+    uint8_t *buffer = malloc(MAX_QUERY_SIZE);
 
-    // Start parsing the hostname into the query buffer after the header
-    uint16_t index = sizeof(dns_header), i = 0;
+    // Iterate through the hostname and build the query buffer according to the DNS protocol format
+    int label = 0, index = 1;
     while (*hostname) {
         // Prevent invalid characters and labels longer than 63 bytes
         if (*hostname == ' ' || *hostname == '\t' || *hostname == '\n' || *hostname == '\r' ||
-            i >= 63) {
-            free(tmp);
+            index >= 63) {
+            free(buffer);
             return DNS_QUERY_ERROR;
         }
 
         // Handle label boundaries (dots)
         if (*hostname == '.') {
-            if (i == 0) { // Prevent empty labels
-                free(tmp);
+            if (label == 0) { // Prevent empty labels
+                free(buffer);
                 return DNS_QUERY_ERROR;
             }
-            tmp[index] = i;
-            index += i + 1;
-            i = 0;
+            buffer[label] = index;
+            label += index + 1;
+            index = 0;
         }
 
         else {
-            if (index + i + 1 >= MAX_QUERY_SIZE) { // Prevent buffer overflow
-                free(tmp);
+            if (label + index + 1 >= MAX_QUERY_SIZE) { // Prevent buffer overflow
+                free(buffer);
                 return DNS_QUERY_ERROR;
             }
-            tmp[index + i + 1] = *hostname;
-            i++;
+            buffer[label + index + 1] = *hostname;
+            index++;
         }
         hostname++;
     }
 
-    // Prevent buffer overflow for the null terminator and footer
-    if (index + i + 1 + sizeof(dns_footer) >= MAX_QUERY_SIZE) {
-        free(tmp);
-        return DNS_QUERY_ERROR;
-    }
+    buffer[label] = index;                          // Length of the last label
+    label += index + 1;                             // Total size of the domain name
+    buffer[label] = 0;                              // Null-terminate the domain name
+    config->query_size = label + FIXED_FIELDS_SIZE; // Total size of the query
 
-    tmp[index] = i;   // Length of the last label
-    index += i + 1;   // Total size of the domain name
-    tmp[index++] = 0; // Null-terminate the domain name
-
-    dns_footer footer = {
-        htons(0x0001), // QTYPE: A
-        htons(0x0001)  // QCLASS: IN
-    };
-    memcpy(tmp + index, &footer, sizeof(footer));
-    *query_size = index + sizeof(footer);
-
-    // Allocate the final buffer to the necessary size and copy the query data
-    *buf = malloc(*query_size);
-    if (!*buf) {
-        free(tmp);
+    // Allocate memory for the query name in the query structure and copy the buffer
+    query->query_name = malloc(label);
+    if (!query->query_name) {
+        free(buffer);
         return DNS_MEMORY_ERROR;
-    } else {
-        memcpy(*buf, tmp, *query_size);
     }
+    memcpy(query->query_name, buffer, label);
 
-    free(tmp);
+    free(buffer);
     return DNS_OK;
 }
 
-dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
+dns_status send_query(const dns_query *query, const dns_config *config, uint8_t **response,
                       uint16_t *response_size) {
-    if (!query || !response || !response_size || query_size < sizeof(dns_header) + 5 ||
-        query_size > MAX_QUERY_SIZE) { // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
+    if (!query || !config || !response || !response_size ||
+        config->query_size < FIXED_FIELDS_SIZE + 1 || config->query_size > MAX_QUERY_SIZE) {
         return DNS_INVALID_QUERY;
     }
 
@@ -106,19 +101,19 @@ dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
         return DNS_SOCKET_ERROR;
     }
 
-    struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = htons(53)};
-    if (inet_pton(AF_INET, "8.8.8.8", &dest.sin_addr) != 1) {
+    struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = config->port};
+    if (inet_pton(AF_INET, config->dns_server, &dest.sin_addr) != 1) {
         close(fd);
         return DNS_INVALID_ADDRESS;
     }
 
-    struct timeval tv = {.tv_sec = 5, .tv_usec = 0}; // 5-second timeout
+    struct timeval tv = {.tv_sec = config->timeout, .tv_usec = 0}; // 5-second timeout
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
         close(fd);
         return DNS_SOCKET_ERROR;
     }
 
-    if (sendto(fd, query, query_size, 0, (struct sockaddr *)&dest, sizeof(dest)) == -1) {
+    if (sendto(fd, query, config->query_size, 0, (struct sockaddr *)&dest, sizeof(dest)) == -1) {
         close(fd);
         return DNS_SOCKET_ERROR;
     }
@@ -151,16 +146,14 @@ dns_status send_query(uint8_t *query, uint16_t query_size, uint8_t **response,
     return DNS_OK;
 }
 
-dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer_count,
+dns_status parse_response(dns_query *query, uint8_t *response, uint16_t response_size,
                           dns_answer **answers) {
-    // Minimum size: header + 1 byte for domain + QTYPE + QCLASS
-    if (!response || !answer_count || !answers || response_size < sizeof(dns_header) + 5) {
+    if (!query || !response || !answers || response_size < strlen((char *)query->query_name)) {
         return DNS_INVALID_ANSWER;
     }
 
-    // Response starts with the query data, so we need to skip the header
-    dns_header header;
-    memcpy(&header, response, sizeof(header));
+    // Response starts with the query data, which we can skip
+    memcpy(&query->id, response, query->query_size);
     *answer_count = ntohs(header.ancount);
     if (*answer_count == 0) {
         return DNS_NO_ANSWERS; // No answers in the response
@@ -184,7 +177,8 @@ dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer
     // dns_answer structure
     for (uint16_t i = 0; i < *answer_count; i++) {
         // Name pointer check and buffer overflow prevention.
-        if ((*(response + index) & 0xC0) != 0xC0 || index + 10 > response_size) {
+        if ((*(response + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER ||
+            index + 10 > response_size) {
             free(*answers);
             *answers = NULL;
             return DNS_INVALID_ANSWER;
@@ -203,9 +197,9 @@ dns_status parse_response(uint8_t *response, uint16_t response_size, int *answer
         index += 4; // Move past TTL
         memcpy(&(*answers)[i].datalength, response + index, 2);
         (*answers)[i].datalength = ntohs((*answers)[i].datalength);
-        index += 2;                    // Move past data length
-        if ((*answers)[i].type == 1) { // Type A (IPv4)
-            inet_ntop(AF_INET, response + index, (*answers)[i].address, ADDRESS_SIZE);
+        index += 2;                              // Move past data length
+        if ((*answers)[i].type == DNS_QTYPE_A) { // Type A (IPv4)
+            inet_ntop(AF_INET, response + index, (*answers)[i].address, INET6_ADDRSTRLEN);
         }
         index += (*answers)[i].datalength; // Move past the address
     }
