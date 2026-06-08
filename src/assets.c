@@ -1,5 +1,4 @@
 // TODO:
-// IPv6 support is not implemented, and the code assumes that all answers will be of type A (IPv4).
 // Make it so that the resolver is not hardcoded to use Google's public DNS server
 // The code does not handle different types of answers (e.g., CNAME, MX, etc.).
 // Testing unit should be updated.
@@ -234,9 +233,29 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
         index += 4; // Move past TTL
         memcpy(&(*answers)[i].datalength, response->data + index, 2);
         (*answers)[i].datalength = ntohs((*answers)[i].datalength);
-        index += 2;                              // Move past data length
-        if ((*answers)[i].type == DNS_QTYPE_A) { // Type A (IPv4)
-            inet_ntop(AF_INET, response->data + index, (*answers)[i].address, INET6_ADDRSTRLEN);
+        index += 2; // Move past data length
+        switch ((*answers)[i].type) {
+        case DNS_QTYPE_A:
+            if ((*answers)[i].datalength != 4) { // A records should have a data length of 4 bytes
+                free(*answers);
+                *answers = NULL;
+                return DNS_ANSWER_ERROR;
+            }
+            inet_ntop(AF_INET, response->data + index, (*answers)[i].address, INET_ADDRSTRLEN);
+            break;
+        case DNS_QTYPE_AAAA:
+            if ((*answers)[i].datalength !=
+                16) { // AAAA records should have a data length of 16 bytes
+                free(*answers);
+                *answers = NULL;
+                return DNS_ANSWER_ERROR;
+            }
+            inet_ntop(AF_INET6, response->data + index, (*answers)[i].address, INET6_ADDRSTRLEN);
+            break;
+        default:
+            free(*answers);
+            *answers = NULL;
+            return DNS_ANSWER_ERROR; // Unsupported record type
         }
         index += (*answers)[i].datalength; // Move past the address
     }
