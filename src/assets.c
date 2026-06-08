@@ -18,6 +18,7 @@ dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query 
 
     // Set default values for the configuration
     strncpy(config->dns_server, DNS_DEFAULT_SERVER, sizeof(config->dns_server));
+    config->dns_server[sizeof(config->dns_server) - 1] = '\0'; // Ensure null-termination
     config->port = DNS_DEFAULT_PORT;
     config->timeout = DNS_DEFAULT_TIMEOUT;
 
@@ -49,6 +50,7 @@ dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query 
         return DNS_HOSTNAME_ERROR;
     }
     strncpy(query->query_name, argv[optind], DNS_MAX_HOSTNAME_LENGTH);
+    query->query_name[DNS_MAX_HOSTNAME_LENGTH] = '\0'; // Ensure null-termination
 
     return DNS_OK;
 }
@@ -205,7 +207,7 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
     // Skip the question section by moving the number of bytes specified by the labels in the
     // query
     uint16_t index = DNS_HEADER_SIZE; // Start after the header
-    while (*(response->data + index) && index < response->size) {
+    while (index < response->size && *(response->data + index)) {
         index += *(response->data + index) + 1;
     }
     // Skip the null byte and footer
@@ -217,7 +219,7 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
     }
     // Allocate memory for the answers based on the number of answers specified in the header
     *answers = malloc(*answer_count * sizeof(dns_answer));
-    if (!*answers) {
+    if (*answer_count > 0 && !*answers) {
         return DNS_MEMORY_ERROR;
     }
 
@@ -225,8 +227,8 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
     // dns_answer structure
     for (uint16_t i = 0; i < *answer_count; i++) {
         // Name pointer check and buffer overflow prevention.
-        if ((*(response->data + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER ||
-            index + DNS_HEADER_SIZE > response->size) {
+        if (index >= response->size ||
+            (*(response->data + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER) {
             free(*answers);
             *answers = NULL;
             return DNS_ANSWER_ERROR;
@@ -251,6 +253,7 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
             *answers = NULL;
             return DNS_ANSWER_ERROR;
         }
+
         switch ((*answers)[i].type) {
         case DNS_QTYPE_A:
             if ((*answers)[i].datalength != 4) { // A records should have a data length of 4 bytes
