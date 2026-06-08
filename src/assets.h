@@ -32,19 +32,19 @@ typedef enum {
 } dns_status;
 
 typedef struct {
-    char dns_server[INET6_ADDRSTRLEN]; // DNS server address (IPv4 or IPv6)
+    char dns_server[INET6_ADDRSTRLEN]; // DNS server address (IPv4 for now)
     uint16_t port;                     // DNS server port
     uint16_t timeout;                  // Query timeout
 } dns_config;
 
 /** @brief Unserialized DNS query structure */
 typedef struct {
-    uint16_t id;                              // Query ID
-    uint16_t flags;                           // Query flags
-    uint16_t qdcount;                         // Number of questions
-    char query_name[DNS_MAX_HOSTNAME_LENGTH]; // Domain name to query
-    uint16_t qtype;                           // Query type (e.g., A, AAAA)
-    uint16_t qclass;                          // Query class (usually 1 for IN)
+    uint16_t id;                                  // Query ID
+    uint16_t flags;                               // Query flags
+    uint16_t qdcount;                             // Number of questions
+    char query_name[DNS_MAX_HOSTNAME_LENGTH + 1]; // Domain name to query
+    uint16_t qtype;                               // Query type (e.g., A, AAAA)
+    uint16_t qclass;                              // Query class (usually 1 for IN)
 } dns_query;
 
 /** @brief Unserialized DNS answer structure */

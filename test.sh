@@ -18,7 +18,7 @@ check_exit() {
   echo -e "\n[TEST]: $desc -> $DNS $*" >> "$LOG_FILE"
 
   # Run the command, append all output to the log file
-  $DNS "$@" >> "$LOG_FILE" 2>&1
+  "$DNS" "$@" >> "$LOG_FILE" 2>&1
   local exit_code=$?
 
   if [ "$exit_code" -eq "$expected_exit" ]; then
@@ -40,7 +40,7 @@ check_output() {
 
   # Capture output and append to log
   local output
-  output=$($DNS "$@" 2>&1 | tee -a "$LOG_FILE")
+  output=$("$DNS" "$@" 2>&1 | tee -a "$LOG_FILE")
   local exit_code=${PIPESTATUS[0]}
 
   # Check if exit is 0 AND the output contains our expected string

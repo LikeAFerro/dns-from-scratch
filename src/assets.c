@@ -104,6 +104,10 @@ dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query)
         }
         hostname++;
     }
+    if (index == 0) { // Prevent empty last label
+        free(buffer);
+        return DNS_HOSTNAME_ERROR;
+    }
 
     buffer[serialized_query->size + label] = index; // Length of the last label
     label += index + 1;                             // Total size of the domain name
@@ -113,6 +117,11 @@ dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query)
     uint16_t qtype_qclass[] = {htons(query->qtype), htons(query->qclass)};
     memcpy(buffer + serialized_query->size, qtype_qclass, sizeof(qtype_qclass));
     serialized_query->size += sizeof(qtype_qclass);
+    // Prevent buffer overflow and invalid query sizes
+    if (serialized_query->size > DNS_MAX_QUERY_SIZE) {
+        free(buffer);
+        return DNS_QUERY_ERROR;
+    }
 
     // Allocate memory for the query name in the query structure and copy the buffer
     serialized_query->data = malloc(serialized_query->size);
@@ -165,7 +174,7 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
     if (size == -1) {
         free(tmp);
         close(fd);
-        return DNS_ANSWER_ERROR;
+        return DNS_SOCKET_ERROR;
     }
     response->size = size;
 
@@ -196,12 +205,16 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
     // Skip the question section by moving the number of bytes specified by the labels in the
     // query
     uint16_t index = DNS_HEADER_SIZE; // Start after the header
-    while (*(response->data + index)) {
+    while (*(response->data + index) && index < response->size) {
         index += *(response->data + index) + 1;
     }
     // Skip the null byte and footer
     index += 1 + sizeof(uint16_t) * 2; // Move past the null byte and QTYPE/QCLASS fields
 
+    // Validate that the number of answers specified in the header is reasonable
+    if (*answer_count > response->size) {
+        return DNS_ANSWER_ERROR;
+    }
     // Allocate memory for the answers based on the number of answers specified in the header
     *answers = malloc(*answer_count * sizeof(dns_answer));
     if (!*answers) {
@@ -213,7 +226,7 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
     for (uint16_t i = 0; i < *answer_count; i++) {
         // Name pointer check and buffer overflow prevention.
         if ((*(response->data + index) & DNS_NAME_POINTER) != DNS_NAME_POINTER ||
-            index + 10 > response->size) {
+            index + DNS_HEADER_SIZE > response->size) {
             free(*answers);
             *answers = NULL;
             return DNS_ANSWER_ERROR;
@@ -232,7 +245,12 @@ dns_status parse_response(const dns_buffer *response, dns_answer **answers,
         index += 4; // Move past TTL
         memcpy(&(*answers)[i].datalength, response->data + index, 2);
         (*answers)[i].datalength = ntohs((*answers)[i].datalength);
-        index += 2; // Move past data length
+        index += 2;                                              // Move past data length
+        if (index + (*answers)[i].datalength > response->size) { // Prevent buffer overflow
+            free(*answers);
+            *answers = NULL;
+            return DNS_ANSWER_ERROR;
+        }
         switch ((*answers)[i].type) {
         case DNS_QTYPE_A:
             if ((*answers)[i].datalength != 4) { // A records should have a data length of 4 bytes
