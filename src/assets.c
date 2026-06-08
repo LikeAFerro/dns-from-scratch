@@ -44,7 +44,7 @@ dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query 
             return DNS_OPTION_ERROR;
         }
     }
-    if (optind >= argc) {
+    if (optind >= argc || argc > optind + 1) {
         return DNS_ARGUMENT_ERROR;
     }
     if (strlen(argv[optind]) > DNS_MAX_HOSTNAME_LENGTH) {
