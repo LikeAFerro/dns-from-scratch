@@ -59,6 +59,7 @@ check_output "Query for google.com" "Address:" google.com
 check_exit "Query for edu23.itivinci.mo.it" 0 edu23.itivinci.mo.it
 check_exit "IPv6 Flag (-6) sets correctly" 0 -6 google.com
 check_exit "Help flag (-h) shows usage" 0 -h
+check_exit "Resolver flag (-R) works" 0 -R "1.1.1.1" example.com
 
 echo "=== Invalid Usage ==="
 check_exit "No arguments" 1

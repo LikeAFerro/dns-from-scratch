@@ -152,12 +152,6 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
         return DNS_QUERY_ERROR;
     }
 
-    /*
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd == -1) {
-        return DNS_SOCKET_ERROR;
-    }*/
-
     struct addrinfo hints = {0}, *res = NULL;
     hints.ai_family = AF_UNSPEC; // Works for both IPv4 and IPv6 addresses
     hints.ai_socktype = SOCK_DGRAM;
@@ -167,18 +161,24 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
         return DNS_ADDRESS_ERROR;
     }
 
-    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    struct addrinfo *selected = NULL;
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
+        if (p->ai_family == AF_INET || p->ai_family == AF_INET6) {
+            selected = p; // Use the first valid address found
+            break;
+        }
+    }
+    if (!selected) {
+        freeaddrinfo(res);
+        return DNS_ADDRESS_ERROR;
+    }
+
+    int fd = socket(selected->ai_family, selected->ai_socktype, selected->ai_protocol);
     if (fd == -1) {
         freeaddrinfo(res);
         return DNS_SOCKET_ERROR;
     }
-    /*
-        struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = htons(config->port)};
-        if (inet_pton(AF_INET, config->dns_server, &dest.sin_addr) != 1) {
-            close(fd);
-            return DNS_ADDRESS_ERROR;
-        }
-    */
+
     struct timeval tv = {.tv_sec = config->timeout, .tv_usec = 0}; // 5-second timeout
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
         close(fd);
@@ -186,7 +186,7 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
         return DNS_SOCKET_ERROR;
     }
 
-    if (sendto(fd, query->data, query->size, 0, res->ai_addr, res->ai_addrlen) == -1) {
+    if (sendto(fd, query->data, query->size, 0, selected->ai_addr, selected->ai_addrlen) == -1) {
         close(fd);
         freeaddrinfo(res);
         return DNS_SOCKET_ERROR;
@@ -204,6 +204,7 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
     if (size == -1) {
         free(tmp);
         close(fd);
+        freeaddrinfo(res);
         return DNS_SOCKET_ERROR;
     }
     response->size = size;
@@ -213,12 +214,14 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
     if (!response->data) {
         free(tmp);
         close(fd);
+        freeaddrinfo(res);
         return DNS_MEMORY_ERROR;
     }
     memcpy(response->data, tmp, response->size);
 
     free(tmp);
     close(fd);
+    freeaddrinfo(res);
     return DNS_OK;
 }
 
