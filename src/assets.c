@@ -1,5 +1,4 @@
 // TODO:
-// Make it so that the resolver is not hardcoded to use Google's public DNS server
 // The code does not handle different types of answers (e.g., CNAME, MX, etc.).
 
 #include "assets.h"
