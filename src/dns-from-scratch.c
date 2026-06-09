@@ -17,6 +17,7 @@ int main(int argc, char *argv[]) {
             printf("Options:\n");
             printf("  -h        Show this help message\n");
             printf("  -6        Query for AAAA records (IPv6)\n");
+            printf("  -R <addr> Specify custom DNS server address\n");
             exit(0);
         case DNS_ARGUMENT_ERROR:
             fprintf(stderr, "Invalid arguments provided\n");

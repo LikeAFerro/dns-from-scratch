@@ -4,7 +4,9 @@
 
 #include "assets.h"
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -32,12 +34,19 @@ dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query 
 
     // Parse command-line options and arguments
     int opt;
-    while ((opt = getopt(argc, argv, "h6")) != -1) {
+    while ((opt = getopt(argc, argv, ":h6R:")) != -1) {
         switch (opt) {
         case 'h':
             return DNS_HELP;
         case '6':
             query->qtype = DNS_QTYPE_AAAA;
+            break;
+        case 'R':
+            if (strlen(optarg) >= sizeof(config->dns_server)) {
+                return DNS_ARGUMENT_ERROR;
+            }
+            strncpy(config->dns_server, optarg, sizeof(config->dns_server) - 1);
+            config->dns_server[sizeof(config->dns_server) - 1] = '\0'; // Ensure null-termination
             break;
         default:
             return DNS_OPTION_ERROR;
@@ -143,25 +152,43 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
         return DNS_QUERY_ERROR;
     }
 
+    /*
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd == -1) {
         return DNS_SOCKET_ERROR;
-    }
+    }*/
 
-    struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = htons(config->port)};
-    if (inet_pton(AF_INET, config->dns_server, &dest.sin_addr) != 1) {
-        close(fd);
+    struct addrinfo hints = {0}, *res = NULL;
+    hints.ai_family = AF_UNSPEC; // Works for both IPv4 and IPv6 addresses
+    hints.ai_socktype = SOCK_DGRAM;
+    char port_str[6]; // Buffer to hold the string representation of the port number
+    snprintf(port_str, sizeof(port_str), "%d", config->port);
+    if (getaddrinfo(config->dns_server, port_str, &hints, &res) != 0) {
         return DNS_ADDRESS_ERROR;
     }
 
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd == -1) {
+        freeaddrinfo(res);
+        return DNS_SOCKET_ERROR;
+    }
+    /*
+        struct sockaddr_in dest = {.sin_family = AF_INET, .sin_port = htons(config->port)};
+        if (inet_pton(AF_INET, config->dns_server, &dest.sin_addr) != 1) {
+            close(fd);
+            return DNS_ADDRESS_ERROR;
+        }
+    */
     struct timeval tv = {.tv_sec = config->timeout, .tv_usec = 0}; // 5-second timeout
     if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
         close(fd);
+        freeaddrinfo(res);
         return DNS_SOCKET_ERROR;
     }
 
-    if (sendto(fd, query->data, query->size, 0, (struct sockaddr *)&dest, sizeof(dest)) == -1) {
+    if (sendto(fd, query->data, query->size, 0, res->ai_addr, res->ai_addrlen) == -1) {
         close(fd);
+        freeaddrinfo(res);
         return DNS_SOCKET_ERROR;
     }
 
@@ -170,6 +197,7 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
     uint8_t *tmp = malloc(DNS_MAX_RESPONSE_SIZE);
     if (!tmp) {
         close(fd);
+        freeaddrinfo(res);
         return DNS_MEMORY_ERROR;
     }
     int size = recvfrom(fd, tmp, DNS_MAX_RESPONSE_SIZE, 0, NULL, NULL);
