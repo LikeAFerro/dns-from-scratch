@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     // Initial configuration and argument parsing
     dns_query query;
     dns_config config;
@@ -93,12 +94,8 @@ int main(int argc, char *argv[]) {
 
     printf("Answers received: %d\n", answer_count);
     for (int i = 0; i < answer_count; i++) {
-        printf("Type: %u, Class: %u, TTL: %u, Data Length: %u, Address: %s\n",
-               answers[i].type,
-               answers[i].addr_class,
-               answers[i].ttl,
-               answers[i].datalength,
-               answers[i].address);
+        printf("Type: %u, Class: %u, TTL: %u, Data Length: %u, Address: %s\n", answers[i].type,
+               answers[i].addr_class, answers[i].ttl, answers[i].datalength, answers[i].address);
     }
 
     free(serialized_query.data);

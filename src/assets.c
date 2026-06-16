@@ -12,7 +12,8 @@
 #include <time.h>
 #include <unistd.h>
 
-dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query *query) {
+dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query *query)
+{
     if (!config || !query || argc < 2) {
         return DNS_ARGUMENT_ERROR;
     }
@@ -63,7 +64,8 @@ dns_status initial_config(int argc, char *argv[], dns_config *config, dns_query 
     return DNS_OK;
 }
 
-dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query) {
+dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query)
+{
     if (!query || !serialized_query || strlen(query->query_name) == 0 || query->qtype == 0 ||
         query->qclass == 0 || query->qdcount == 0) {
         return DNS_QUERY_ERROR;
@@ -145,7 +147,8 @@ dns_status serialize_query(const dns_query *query, dns_buffer *serialized_query)
     return DNS_OK;
 }
 
-dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buffer *response) {
+dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buffer *response)
+{
     if (!query || !config || !response || query->size < DNS_FIXED_FIELDS_SIZE + 1 ||
         query->size > DNS_MAX_QUERY_SIZE) {
         return DNS_QUERY_ERROR;
@@ -224,8 +227,8 @@ dns_status send_query(const dns_buffer *query, const dns_config *config, dns_buf
     return DNS_OK;
 }
 
-dns_status parse_response(const dns_buffer *response, dns_answer **answers,
-                          uint16_t *answer_count) {
+dns_status parse_response(const dns_buffer *response, dns_answer **answers, uint16_t *answer_count)
+{
     if (!response || !answers || !answer_count || response->size < DNS_FIXED_FIELDS_SIZE) {
         return DNS_ANSWER_ERROR;
     }
